@@ -38,8 +38,12 @@
             flex-direction: column;
             align-items: center;
         }
-        input[type="file"] {
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 10px;
             margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
         }
         button {
             padding: 10px 20px;
@@ -98,7 +102,7 @@
     </header>
     <div class="container">
         <form id="uploadForm" enctype="multipart/form-data">
-            <input type="file" id="imageInput" name="image" accept="image/*">
+            <input type="text" id="imageUrl" name="image_url" placeholder="Enter image URL" required>
             <button type="submit">Check Image</button>
         </form>
         <div id="loading">
@@ -106,6 +110,17 @@
         </div>
         <h2>Results</h2>
         <ul id="results"></ul>
+    </div>
+    <div class="container">
+        <form id="knownFacesForm" enctype="multipart/form-data">
+            <input type="text" id="name" name="name" placeholder="Enter name for the face" required>
+            <input type="text" id="knownImageUrl" name="image_url" placeholder="Enter image URL" required>
+            <button type="submit">Upload Known Face</button>
+        </form>
+        <div id="uploadLoading" style="display:none;">
+            <div class="spinner"></div> Uploading...
+        </div>
+        <div id="uploadResult"></div>
     </div>
     <script>
         document.getElementById('uploadForm').addEventListener('submit', function(event) {
@@ -124,18 +139,56 @@
             .then(data => {
                 const results = document.getElementById('results');
                 results.innerHTML = '';
-                data.names.forEach(name => {
-                    const li = document.createElement('li');
-                    li.textContent = name;
-                    results.appendChild(li);
-                });
+                if (data.error) {
+                    results.innerHTML = `<li>Error: ${data.error}</li>`;
+                } else {
+                    data.names.forEach(name => {
+                        const li = document.createElement('li');
+                        li.textContent = name;
+                        results.appendChild(li);
+                    });
+                }
             })
             .catch(error => {
                 console.error('Error:', error);
+                const results = document.getElementById('results');
+                results.innerHTML = `<li>An error occurred. Please try again.</li>`;
             })
             .finally(() => {
                 // Hide loading indicator
                 document.getElementById('loading').style.display = 'none';
+            });
+        });
+
+        document.getElementById('knownFacesForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const formData = new FormData(this);
+            
+            // Show uploading indicator
+            document.getElementById('uploadLoading').style.display = 'block';
+            document.getElementById('uploadResult').innerHTML = '';
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                const uploadResult = document.getElementById('uploadResult');
+                if (data.error) {
+                    uploadResult.innerHTML = `<p style="color: red;">Error: ${data.error}</p>`;
+                } else {
+                    uploadResult.innerHTML = `<p style="color: green;">${data.message}</p>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                const uploadResult = document.getElementById('uploadResult');
+                uploadResult.innerHTML = `<p style="color: red;">An error occurred. Please try again.</p>`;
+            })
+            .finally(() => {
+                // Hide uploading indicator
+                document.getElementById('uploadLoading').style.display = 'none';
             });
         });
     </script>
