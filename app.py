@@ -2,42 +2,53 @@ from flask import Flask, request, jsonify, send_from_directory
 import face_recognition
 import cv2
 import numpy as np
-import os
 import requests
 from io import BytesIO
+from pymongo import MongoClient
+import gridfs
 
 app = Flask(__name__)
 
-# Directory containing known face images
-KNOWN_FACES_DIR = 'known_faces'
+# MongoDB configuration
+MONGO_URI = 'mongodb://localhost:27017' 
+client = MongoClient(MONGO_URI)
+db = client['FaceDB']
+fs = gridfs.GridFS(db)
 
-# Load known faces
+# Global variables for storing known faces
 known_face_encodings = []
 known_face_names = []
+known_face_ids = []  # Add this line
 
 def load_known_faces():
-    global known_face_encodings, known_face_names
+    global known_face_encodings, known_face_names, known_face_ids
     known_face_encodings = []
     known_face_names = []
+    known_face_ids = []
 
-    # Iterate over files in the known_faces directory
-    for filename in os.listdir(KNOWN_FACES_DIR):
-        if filename.endswith(".jpg") or filename.endswith(".png"):
-            image_path = os.path.join(KNOWN_FACES_DIR, filename)
-            image = face_recognition.load_image_file(image_path)
-            encodings = face_recognition.face_encodings(image)
+    # Retrieve all images from MongoDB
+    files = fs.find()
+    for file in files:
+        img_data = file.read()
+        np_img = np.frombuffer(img_data, np.uint8)
+        img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
 
-            # Use all encodings found in the image
+        if img is not None:
+            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            encodings = face_recognition.face_encodings(rgb_img)
+            name = file.filename.split('.')[0]
+            face_id = str(file._id)  # Use MongoDB ObjectId as the face ID
+
             for encoding in encodings:
                 known_face_encodings.append(encoding)
-                known_face_names.append(os.path.splitext(filename)[0])  # Use filename without extension as the name
+                known_face_names.append(name)
+                known_face_ids.append(face_id)  # Append the ID here
 
 load_known_faces()
 
 @app.route('/')
 def index():
     return send_from_directory('static', 'index.html')
-
 @app.route('/recognize', methods=['POST'])
 def recognize_face():
     try:
@@ -58,25 +69,30 @@ def recognize_face():
         face_encodings = face_recognition.face_encodings(rgb_img, face_locations)
 
         if not face_encodings:
-            return jsonify({'names': []})
+            return jsonify({'faces': []})
 
         unique_faces = {}
 
         for face_encoding in face_encodings:
             matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
             name = "Unknown"
+            face_id = None
             if True in matches:
                 first_match_index = matches.index(True)
                 name = known_face_names[first_match_index]
+                face_id = known_face_ids[first_match_index]
             if name not in unique_faces:
-                unique_faces[name] = 1
+                unique_faces[name] = face_id
 
-        return jsonify({'names': list(unique_faces.keys())})
+        # Convert the dictionary to a list of dicts with name and id
+        result = [{'name': name, 'id': unique_faces[name]} for name in unique_faces]
+
+        return jsonify({'faces': result})
 
     except Exception as e:
         # Print the error to the console for debugging
-        print(f"Error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        print(f"Error in /recognize endpoint: {str(e)}")
+        return jsonify({'error': 'An unexpected error occurred. Please try again later.'}), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_image():
@@ -97,15 +113,14 @@ def upload_image():
             if img is None:
                 return jsonify({'error': 'Invalid image data'}), 400
 
-            # Save the image to the known_faces directory
+            # Save the image to MongoDB
             filename = f"{name}.jpg"
-            file_path = os.path.join(KNOWN_FACES_DIR, filename)
-            cv2.imwrite(file_path, img)
+            file_id = fs.put(response.content, filename=filename)
 
             # Reload known faces
             load_known_faces()
 
-            return jsonify({'message': 'Image uploaded successfully.'}), 200
+            return jsonify({'message': 'Image uploaded successfully.', 'id': str(file_id)}), 200
         else:
             return jsonify({'error': 'Invalid input'}), 400
 
